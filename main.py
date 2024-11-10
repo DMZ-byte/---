@@ -1,5 +1,5 @@
 import locale
-
+import time
 import requests
 import re
 import pandas as pd
@@ -156,10 +156,17 @@ def filter_price(number):
 
 
 if __name__ == "__main__":
+    start_time = time.time()
+    #Овие линии се искоментирани доколку доколку веќе постои csv фајл со потребните информации/во патеката.
+    #Вреди да се спомне дека table_values (вториот филтер), еднаш ќе го креира фајлот па потоа само ќе додава на постоечкиот фајл без да ја менува содржината.
     #arr = get_options()
     #get_table_values(arr)
     data = pd.read_csv("mk_stock_proba13.csv")
     data.iloc[:, -2] = data.iloc[:, -2].apply(lambda x: format_price(x) if pd.notnull(x) else x)
     data.iloc[:, -1] = data.iloc[:, -1].apply(lambda x: format_price(x) if pd.notnull(x) else x)
     data.to_csv("formatter_file.csv", index=False)
+
     print(data)
+    end_time= time.time()
+    execution_time = end_time - start_time
+    print(f"Времето потребно за извршување на програмата е {execution_time}")
