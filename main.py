@@ -1,17 +1,13 @@
-import locale
 import time
 import requests
-import re
 import pandas as pd
+import re
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 today = datetime.today()
-one_year_ago = today - timedelta(days=364)
-
-from_date = one_year_ago.strftime("%d.%m.%Y")
-to_date = today.strftime("%d.%m.%Y")
-
+ten_years_ago = today - timedelta(days=3650)
 
 def get_options():  # funkcija sto gi zima site opcii od listat izdavaci, vrakja niza od izdavaci bez broj/ne se hartija od vrednost
     currencies = [
@@ -41,132 +37,77 @@ def get_options():  # funkcija sto gi zima site opcii od listat izdavaci, vrakja
     option_values = [option.get("value") for option in options]
     no_num_val = [value for value in option_values if not re.search(r'\d', value)]
     no_curr_val = [option for option in no_num_val if option not in currencies]
-    # Print or store the values
     print(no_curr_val)
 
     return no_curr_val
 
-
-def format_price(price):
-    try:
-        # Attempt to convert the price to float and format
-        formatted_price = f"{float(price):,.2f}"  # Comma as thousands separator, dot as decimal
-        # Replace commas with dots and vice versa to match Macedonian formatting style
-        return formatted_price.replace(",", "X").replace(".", ",").replace("X", ".")
-    except (ValueError, TypeError):
-        # If conversion fails, return the original value
-        return price
-
-
-def add_dates_filter(opt, last_date):
-    end_date = last_date - timedelta(
-        days=3640)  # funkcija sto go zima posledniot datum dostapen za izdavac opt i dodava se dodeka ne stigne do pred 10 godini
-    while last_date >= end_date:
-        fromm_date = last_date - timedelta(days=364)
-        too_date = last_date
-
-        data = {
-            "FromDate": fromm_date.strftime("%d.%m.%Y"),
-            "ToDate": too_date.strftime("%d.%m.%Y"),
-            "Code": opt
-        }
-
-        url = f'https://www.mse.mk/mk/stats/symbolhistory/{opt}'
-        print(fromm_date, too_date)
-        response = requests.post(url, data=data, timeout=10)
-        parse = BeautifulSoup(response.content, 'html.parser')
-        table = parse.find('table')
-        if table:
-            rows = table.find_all('tr')
-            headers = [header.text.strip() for header in rows[0].find_all('th')]
-            headers.insert(0, "Шифра на компанија")
-            data = []
-            for row in rows[1:]:
-                cells = row.find_all('td')
-                row_data = [cell.text.strip() for cell in cells]
-                row_data.insert(0, opt)
-                data.append(row_data)
-            dff = pd.DataFrame(data, columns=headers)
-            dff.to_csv('mk_stock_proba13.csv', mode='a', header=False, index=False, encoding='utf-8-sig')
-        last_date -= timedelta(days=364)
-
-
-def get_table_values(arr):
-    count = 0
-    # originalna funkcija koja sto za sekoj izdavac gi grebe vrednostite od tabelata vo html-ot pravejki
-    # post request koj sto go menuva from, to datumi. Vrednostite gi apendira do csv fajlot sto se imenuva.
-    for opt in arr:
-        data = {
-            "FromDate": from_date,
-            "ToDate": to_date,
-            "Code": opt
-        }
-
-        url = f'https://www.mse.mk/mk/stats/symbolhistory/{opt}'
-        response = requests.post(url, data=data)
-        parse = BeautifulSoup(response.content, 'html.parser')
-        table = parse.find('table')
-        if not table:
-            print(
-                f"Нема табела за {opt}.")
-            continue
-        rows = table.find_all('tr')
-        headers = [header.text.strip() for header in rows[0].find_all('th')]
-        headers.insert(0, "Шифра на компанија")
-        data = []
-        for row in rows[1:]:
-            cells = row.find_all('td')
-            row_data = [cell.text.strip() for cell in cells]
-            row_data.insert(0, opt)
-            data.append(row_data)
-        df = pd.DataFrame(data, columns=headers)
-        if not df.empty:
-            last_date = df['Датум'].iloc[-1]
-            last_date = datetime.strptime(last_date, "%d.%m.%Y")
-            print(f'Last available date for {opt} is {last_date}')
-        if count == 0:
-            df.to_csv('mk_stock_proba13.csv', mode='a', header=True, index=False, encoding='utf-8-sig')
-            add_dates_filter(opt, last_date)
-        else:
-            df.to_csv('mk_stock_proba13.csv', mode='a', header=False, index=False, encoding='utf-8-sig')
-            add_dates_filter(opt, last_date)
-        count = count + 1
-    return parse
-
-
-def get_tickers():
-    link = 'https://feeds.mse.mk/service/FreeMSEFeeds.svc/ticker/JSON'  # Ovaa funkcija bese probna za koristenje na ticker api od makedonskata berza
-    my_apicode = 'MY-API-CODE'
-    url = f'{link}/{my_apicode}'
-    r = requests.get(url)
-    if r.status_code == 200:
-        print(r.json()['GetTickerJSONResult'])
-        return r.json()
-    else:
-        print('Neuspesen request')
+def fetch_data_for_year_block(opt, from_date, to_date):
+    data = {
+        "FromDate": from_date.strftime("%d.%m.%Y"),
+        "ToDate": to_date.strftime("%d.%m.%Y"),
+        "Code": opt
+    }
+    url = f'https://www.mse.mk/mk/stats/symbolhistory/{opt}'
+    response = requests.post(url, data=data, timeout=10)
+    parse = BeautifulSoup(response.content, 'html.parser')
+    table = parse.find('table')
+    if not table:
         return None
+    rows = table.find_all('tr')
+    headers = [header.text.strip() for header in rows[0].find_all('th')]
+    headers.insert(0, "Шифра на компанија")
+    data = []
+    for row in rows[1:]:
+        cells = row.find_all('td')
+        row_data = [cell.text.strip() for cell in cells]
+        row_data.insert(0, opt)
+        data.append(row_data)
+    return pd.DataFrame(data, columns=headers)
 
+def fetch_all_data_for_opt(opt):
+    collected_data = []
+    to_date = today
+    while to_date > ten_years_ago:
+        from_date = to_date - timedelta(days=364)
+        df = fetch_data_for_year_block(opt, from_date, to_date)
+        if df is not None:
+            collected_data.append(df)
+        to_date -= timedelta(days=364)
+    if collected_data:
+        return pd.concat(collected_data, ignore_index=True)
+    return None
 
-def filter_price(number):
+def format_mk_price(number):
     num_str = str(number)
-    if '.' in num_str:
-        part = num_str.rsplit('.', 1)
-        return ','.join(part)
-    return num_str
 
+    parts = num_str.split(".")
+
+    if len(parts) > 1:
+        port = parts.pop()
+        port = ',' + port
+        parts[-1] = parts[-1].replace('.', ',')
+        return '.'.join(parts) + port
+
+    # Za sega e vaka posto ne raboti
+    return number
+
+def format_prices(df):
+    if len(df.columns) >= 3:
+        df.iloc[:, -2] = df.iloc[:, -2].apply(format_mk_price)
+        df.iloc[:, -1] = df.iloc[:, -1].apply(format_mk_price)
+    return df
+
+def get_table_values():
+    opts = get_options()
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(fetch_all_data_for_opt, opts)
+    all_data = pd.concat([df for df in results if df is not None], ignore_index=True)
+    all_data = format_prices(all_data)
+    all_data.to_csv('mk_stock_data1.csv', index=False, encoding='utf-8-sig')
 
 if __name__ == "__main__":
-    start_time = time.time()
-    #Овие линии се искоментирани доколку доколку веќе постои csv фајл со потребните информации/во патеката.
-    #Вреди да се спомне дека table_values (вториот филтер), еднаш ќе го креира фајлот па потоа само ќе додава на постоечкиот фајл без да ја менува содржината.
-    #arr = get_options()
-    #get_table_values(arr)
-    data = pd.read_csv("mk_stock_proba13.csv")
-    data.iloc[:, -2] = data.iloc[:, -2].apply(lambda x: format_price(x) if pd.notnull(x) else x)
-    data.iloc[:, -1] = data.iloc[:, -1].apply(lambda x: format_price(x) if pd.notnull(x) else x)
-    data.to_csv("formatter_file.csv", index=False)
 
-    print(data)
-    end_time= time.time()
-    execution_time = end_time - start_time
-    print(f"Времето потребно за извршување на програмата е {execution_time}")
+    start_time = time.time()
+    get_table_values()
+    execution_time = time.time() - start_time
+    print(f"Execution time: {execution_time:.2f} seconds")
